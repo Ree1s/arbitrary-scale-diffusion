@@ -19,7 +19,7 @@ model:
     cond_stage_trainable: False
     monitor: val/loss_simple_ema
     scale_by_std: True
-    ckpt_path: models/sr_bsr/model.ckpt
+    # ckpt_path: models/sr_bsr/model.ckpt
     
     unet_config:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel

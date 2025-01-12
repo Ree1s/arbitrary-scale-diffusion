@@ -38,8 +38,7 @@ class DatasetBase(Dataset):
 
         self.size = size
         self.lr_size = lr_size
-        self.interpolation = {"linear": Image.LINEAR,
-                              "bilinear": Image.BILINEAR,
+        self.interpolation = {"bilinear": Image.BILINEAR,
                               "bicubic": Image.BICUBIC,
                               "lanczos": Image.LANCZOS,
                               }[interpolation]
@@ -188,12 +187,12 @@ class DIV2KBase(DatasetBase):
 
 class DIV2KTrain(DIV2KBase):
     def __init__(self, **kwargs):
-        super().__init__(data_root="../datasets/DIV2K_train_HR", repeat=20, augment=True, **kwargs)
+        super().__init__(data_root="../../dataset/DIV2K_train_HR", repeat=20, augment=True, **kwargs)
 
 class DIV2KValidation(DIV2KBase):
     def __init__(self, **kwargs):
         # super().__init__(data_root="../datasets/DIV2K_valid_HR", repeat=160, **kwargs)
-        super().__init__(data_root="../datasets/DIV2K_valid_HR", **kwargs)
+        super().__init__(data_root="../../dataset/DIV2K_valid_HR", **kwargs)
 
 class DF2KTrain(DIV2KBase):
     def __init__(self, **kwargs):

@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 import torch.nn.functional as F
 from einops import rearrange
 
-from ldm.modules.diffusionmodules.model import Encoder, Decoder, LIIF
+from ldm.modules.diffusionmodules.model import Encoder, Decoder,Decoder_gs, LIIF, GaussianSplatter
 from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
 
 from ldm.util import instantiate_from_config
@@ -22,13 +22,14 @@ class IND(nn.Module):
 
         self.decoder = nn.Sequential(
             nn.Conv2d(ddconfig["z_channels"], ddconfig["z_channels"], 1),
-            Decoder(**ddconfig)
+            Decoder_gs(**ddconfig)
         )
-        self.inr = LIIF(in_dim=ddconfig['ch']*ddconfig['ch_mult'][0], out_dim=3, **liifconfig)
+        # self.inr = LIIF(in_dim=ddconfig['ch']*ddconfig['ch_mult'][0], out_dim=3, **liifconfig)
+        self.inr = GaussianSplatter(in_dim=ddconfig['ch']*ddconfig['ch_mult'][0], out_dim=3, **liifconfig)
 
     def forward(self, z, coord=None, cell=None, output_size=None, return_img=True, bsize=0):
-        h = self.decoder(z)
-        return self.inr(h, coord=coord, cell=cell, output_size=output_size)
+        h, logits = self.decoder(z)
+        return self.inr(h, logits, coord=coord, cell=cell, output_size=output_size)
 
 
 class FirstStageModel(pl.LightningModule):
