@@ -22,14 +22,15 @@ class IND(nn.Module):
 
         self.decoder = nn.Sequential(
             nn.Conv2d(ddconfig["z_channels"], ddconfig["z_channels"], 1),
-            Decoder_gs(**ddconfig)
+            Decoder(**ddconfig)
+            # Decoder_gs(**ddconfig)
         )
-        # self.inr = LIIF(in_dim=ddconfig['ch']*ddconfig['ch_mult'][0], out_dim=3, **liifconfig)
-        self.inr = GaussianSplatter(in_dim=ddconfig['ch']*ddconfig['ch_mult'][0], out_dim=3, **liifconfig)
+        self.inr = LIIF(in_dim=ddconfig['ch']*ddconfig['ch_mult'][0], out_dim=3, **liifconfig)
+        # self.inr = GaussianSplatter(in_dim=ddconfig['ch']*ddconfig['ch_mult'][0], out_dim=3, **liifconfig)
 
     def forward(self, z, coord=None, cell=None, output_size=None, return_img=True, bsize=0):
-        h, logits = self.decoder(z)
-        return self.inr(h, logits, coord=coord, cell=cell, output_size=output_size)
+        h = self.decoder(z)
+        return self.inr(h, coord=coord, cell=cell, output_size=output_size)
 
 
 class FirstStageModel(pl.LightningModule):
@@ -106,6 +107,13 @@ class FirstStageModel(pl.LightningModule):
 
     def encode(self, x):
         h = self.encoder(x)
+        # # visualize encoder output
+        # import matplotlib.pyplot as plt
+        # image = h[0].permute(1, 2, 0).detach().cpu().numpy()
+        # plt.imshow(image)
+        # plt.axis('off')
+        # plt.savefig('encoder_output.png')
+        # plt.show()
         if self.use_posterior:
             return DiagonalGaussianDistribution(h)
         else:
