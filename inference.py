@@ -1,31 +1,46 @@
-import os
-import sys
 import argparse
-import yaml
-from omegaconf import OmegaConf
+import os
+from PIL import Image
+from functools import partial
 
 import numpy as np
-from tqdm import tqdm
-from PIL import Image
-import torch
-from ldm.util import instantiate_from_config
 
-def load_model(config, ckpt):
-    print(f"Loading model from {ckpt}")
-    pl_sd = torch.load(ckpt, map_location="cpu")
-    if 'state_dict' in pl_sd:
-        sd = pl_sd["state_dict"]
-    else:
-        sd = pl_sd
-    model = instantiate_from_config(config.model)
-    m, u = model.load_state_dict(sd, strict=False) # TODO
-    model.cuda()
-    model.eval()
-    return model
+from tqdm import tqdm
+import torch
+from torch.nn import functional as F
+from torchvision import transforms
+from omegaconf import OmegaConf
+from torch.utils.data import DataLoader
+
+from ldm.util import instantiate_from_config
+from ldm.models.diffusion.ddim import DDIMSampler
+from torch.nn.functional import interpolate
+
+from einops import rearrange
+
+import lpips
+
+from ignite.engine import *
+from ignite.handlers import *
+from ignite.metrics import *
+from ignite.utils import *
+from ignite.contrib.metrics.regression import *
+from ignite.contrib.metrics import *
+import time
+
+
+# create default evaluator for doctests
+
+def eval_step(engine, batch):
+    return batch
+
+
+default_evaluator = Engine(eval_step)
+
 
 def str2bool(v):
     if isinstance(v, bool):
-       return v
+        return v
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True
     elif v.lower() in ('no', 'false', 'f', 'n', '0'):
@@ -33,84 +48,166 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
-def main(args):
-    config_path =f'{args.log_dir}/configs/{log_dir[5:24]}-project.yaml'
-    
-    if args.epoch < 0:
-        ckpt_path = f'{args.log_dir}/checkpoints/last.ckpt'
+
+class Averager():
+
+    def __init__(self):
+        self.n = 0.0
+        self.v = 0.0
+
+    def add(self, v, n=1.0):
+        self.v = (self.v * self.n + v * n) / (self.n + n)
+        self.n += n
+
+    def item(self):
+        return self.v
+
+
+def calc_psnr(sr, hr, dataset=None, scale=1, rgb_range=1):
+    diff = (sr - hr) / rgb_range
+    if dataset is not None:
+        if dataset == 'benchmark':
+            shave = scale
+            if diff.size(1) > 1:
+                gray_coeffs = [65.738, 129.057, 25.064]
+                convert = diff.new_tensor(gray_coeffs).view(1, 3, 1, 1) / 256
+                diff = diff.mul(convert).sum(dim=1)
+        elif dataset == 'div2k':
+            shave = scale + 6
+        else:
+            raise NotImplementedError
+        valid = diff[..., shave:-shave, shave:-shave]
     else:
-        ckpt_path = f'{args.log_dir}/checkpoints/epoch={args.epoch:06d}.ckpt'
+        valid = diff
+    mse = valid.pow(2).mean()
+    return -10 * torch.log10(mse)
 
-    
+
+def load_model_from_config(config, ckpt):
+    print(f"Loading model from {ckpt}")
+    model = instantiate_from_config(config.model)
+    model.cuda()
+    model.eval()
+    return model
+
+
+def eval_psnr(lr_size, scale_ratio, first_k, eval_type=None, eval_bsize=None, verbose=False, save_image=False, eta=0.0,
+              steps=200):
     config = OmegaConf.load(config_path)
+    ignore_keys = config.model.params.get('ignore_keys', [])
+    ignore_keys.append('loss_fn')
+    config.model.params.ignore_keys = ignore_keys
+    config.model.params.ckpt_path = ckpt_path
 
-    model = load_model(config, ckpt_path)
+    model = load_model_from_config(config, ckpt_path)
 
-    for i in range(0, args.num, args.batch_size):
-        bs = (args.num - i) % args.batch_size + 1
+    print('scale_factor:', model.scale_factor)
+    output_size = round(lr_size * scale_ratio)
 
-    
-    samples, _ = model.sample_log(
-        batch_size=bs, ddim=True,
-        ddim_steps=argssteps, eta=eta, print_bar=False)
+    config.data.params.batch_size = args.batch_size
+    config.data.params.train.params.first_k = 1
+    config.data.params.validation.params.first_k = first_k
+    config.data.params.validation.params.size = output_size
 
-def save_img(pred, save_dir, begin=0):
-    os.makedirs(save_dir, exist_ok=True)
-    pred = pred.detach().cpu()
-    pred = ((pred * 0.5 + 0.5).clamp(0, 1) * 255).to(torch.uint8).permute(0, 2, 3, 1)
-    for i in range(pred.shape[0]):
-        img = Image.fromarray(pred[i].numpy())
-        save_path = os.path.join(save_dir, f'{begin + i:06d}.png')
-        img.save(save_path)
+    data = instantiate_from_config(config.data)
+    data.prepare_data()
+    data.setup()
+    loader = data._val_dataloader()
 
+    loss_fn_alex = lpips.LPIPS(net='alex')
 
-def main(args):
-    exp = args.log_dir.split('/')[-1]
-    config_path = f'{args.log_dir}/configs/{exp[:19]}-project.yaml'
-    save_dir = f'{args.save_dir}/{exp}'
-    
-    if args.epoch < 0:
-        ckpt_path = f'{args.log_dir}/checkpoints/last.ckpt'
+    if eval_type is None:
+        metric_fn = calc_psnr
+    elif eval_type.startswith('div2k'):
+        scale = int(eval_type.split('-')[1])
+        metric_fn = partial(calc_psnr, dataset='div2k')
+    elif eval_type.startswith('benchmark'):
+        scale = int(eval_type.split('-')[1])
+        metric_fn = partial(calc_psnr, dataset='benchmark')
     else:
-        ckpt_path = f'{args.log_dir}/checkpoints/epoch={args.epoch:06d}.ckpt'
+        raise NotImplementedError
 
-    
-    config = OmegaConf.load(config_path)
+    psnr_res = Averager()
+    lpips_res = Averager()
 
-    model = load_model(config, ckpt_path)
+    pbar = tqdm(loader, leave=False, desc='val')
+    for batch in pbar:
 
-    pbar = tqdm(range(0, args.num, args.batch_size), total=args.num, leave=False, desc='inference')
-    for i in pbar:
-        bs = min((args.num - i), args.batch_size)
-    
-        samples, _ = model.sample_log(
-            batch_size=bs, ddim=True, cond=None,
-            ddim_steps=args.steps, eta=args.eta, print_bar=args.verbose)
+        for k, v in batch.items():
+            batch[k] = rearrange(v.cuda(), 'b h w c -> b c h w')
 
-        for s in args.size:
-            pred = model.decode_first_stage(samples, output_size=int(s))
-            save_path = os.path.join(save_dir, f'{s}')
-            save_img(pred, save_path, i)
+        cond = batch['image_lr']
 
-        pbar.update(bs)
+        b_size = min(args.batch_size, cond.shape[0])
 
-        
+        start = time.time()
+        if hasattr(model, 'get_cond'):
+            cond = model.get_cond(cond)
+
+        samples, _ = model.sample_log(cond=cond, batch_size=b_size, ddim=True,
+                                      ddim_steps=steps, eta=eta, log_every_t=20)
+
+        pred = model.decode_first_stage(samples, output_size=output_size)
+        pred = pred * 0.5 + 0.5
+        pred.clamp_(0, 1)
+
+        gt = batch['image_hr']
+        gt = gt * 0.5 + 0.5
+
+        lr = batch['image_lr']
+        lr = lr * 0.5 + 0.5
+
+        psnr = metric_fn(pred, gt)
+        psnr_res.add(psnr.item(), b_size)
+
+        norm = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        pred_n = norm(pred).detach().cpu()
+        gt_n = norm(gt).detach().cpu()
+
+        loss_lpips = loss_fn_alex(pred_n, gt_n).mean()
+        lpips_res.add(loss_lpips.item(), b_size)
+
+        if save_image:
+            save_image = False
+            imgs_path = os.path.join(exp, 'eval_imgs')
+            os.makedirs(imgs_path, exist_ok=True)
+            for i in range(b_size):
+                img_pred = (pred[i].permute(1, 2, 0) * 255).to(torch.uint8).detach().cpu().numpy()
+                Image.fromarray(img_pred).save(f'{imgs_path}/{i:6d}_pred.png')
+
+                img_lr = (lr[i].permute(1, 2, 0) * 255).to(torch.uint8).detach().cpu().numpy()
+                Image.fromarray(img_lr).save(f'{imgs_path}/{i:6d}_lr.png')
+
+        if verbose:
+            pbar.set_description('pnsr: {:.4f}, lpips: {:.4f}'.format(psnr_res.item(), lpips_res.item()))
+
+    fin_res = {'PSNR': psnr_res.item(), 'LPIPS': lpips_res.item()}
+
+    return fin_res
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=globals()['__doc__'])
 
     # Default
-    parser.add_argument('--log_dir', type=str, required=True, help='Path to the exp')
-    parser.add_argument('--save_dir', type=str, required=True, help='Path to the save images')
-    parser.add_argument('--epoch', type=int, default=-1, help='Epoch')
-    parser.add_argument('--num', type=int, default=50000, help='The number of sampling images')
+    parser.add_argument('--exp', type=str, required=True, help='Path to the exp')
+    parser.add_argument('--lr_size', type=int, required=True, help='The number of sampling images')
+    parser.add_argument('--first_k', type=int, default=100, help='The number of sampling images')
     parser.add_argument('--batch_size', type=int, default=8, help='The number of batch size')
     parser.add_argument('--steps', type=int, default=200, help='DDIM steps')
     parser.add_argument('--eta', type=float, default=1.0, help='eta of DDIM')
-    parser.add_argument('--size', nargs='+', required=True, help='Output size')
+    parser.add_argument('--scale_ratio', type=float, required=True, help='Output size')
     parser.add_argument('--verbose', type=str2bool, default=False, help='Print DDIM progress')
+    parser.add_argument('--save_image', type=str2bool, default=True, help='Save outputs')
 
     args = parser.parse_args()
 
-    main(args)
+    exp = args.exp
+    exp_data = exp.split('/')[-1].split('_')[0]
+    config_path = os.path.join(exp, 'configs', f'{exp_data}-project.yaml')
+    ckpt_path = os.path.join(exp, 'checkpoints', 'last.ckpt')
+
+    fin_res = eval_psnr(lr_size=args.lr_size, scale_ratio=args.scale_ratio, first_k=args.first_k, verbose=args.verbose,
+                        save_image=args.save_image, eta=args.eta, steps=args.steps)
+    print(fin_res)
 

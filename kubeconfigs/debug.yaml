@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: debug
+spec:
+  parallelism: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      containers:
+      - name: vsr
+        image: ws.ab/a-s-gao/vsr
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsUser: 1019
+        resources:
+          limits:
+            nvidia.com/gpu: 2
+            cpu: 8
+            memory:
+          requests:
+            nvidia.com/gpu: 2
+            cpu: 8
+            memory:
+        # command: ["bash""python3.11", "/a/mm/scripts/vsr_generate_vqgan_data.py"]
+        command:
+        - bash
+        - "-c"
+        # - python3
+        args:
+        - pip install ptvsd && python /a/mm/debug.py
+        volumeMounts:
+        - mountPath: "/a/mm"
+          name: vl-0
+        - mountPath: "/a/mm/data"
+          name: vl-1
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+      restartPolicy: Never
+      volumes:
+      - name: vl-0
+        hostPath:
+          path: "/shared/ssd/home/a-s-gao/code/MGLD-VSR"
+          type: Directory
+      - name: vl-1
+        hostPath:
+          path: "/shared/hdd/data/a-s-gao/REDS"
+          type: Directory

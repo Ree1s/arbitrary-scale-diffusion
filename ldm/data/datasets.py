@@ -148,8 +148,10 @@ class DIV2KBase(DatasetBase):
 
         # default to score-sde preprocessing
         img = np.array(image).astype(np.uint8)
-        x0 = random.randint(0, img.shape[0] - self.size)
-        y0 = random.randint(0, img.shape[1] - self.size)
+        x0 = 0
+        y0 = 0
+        # x0 = random.randint(0, img.shape[0] - self.size)
+        # y0 = random.randint(0, img.shape[1] - self.size)
         img = img[x0: x0 + self.size, y0: y0 + self.size]
 
         if self.augment:
@@ -187,12 +189,12 @@ class DIV2KBase(DatasetBase):
 
 class DIV2KTrain(DIV2KBase):
     def __init__(self, **kwargs):
-        super().__init__(data_root="../../dataset/DIV2K_train_HR", repeat=20, augment=True, **kwargs)
+        super().__init__(data_root="/a/mm/data/DIV2K/DIV2K_train_HR", repeat=20, augment=True, **kwargs)
 
 class DIV2KValidation(DIV2KBase):
     def __init__(self, **kwargs):
         # super().__init__(data_root="../datasets/DIV2K_valid_HR", repeat=160, **kwargs)
-        super().__init__(data_root="../../dataset/DIV2K_valid_HR", **kwargs)
+        super().__init__(data_root="/a/mm/data/DIV2K//DIV2K_valid_HR", **kwargs)
 
 class DF2KTrain(DIV2KBase):
     def __init__(self, **kwargs):

@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ardgs-eval
+spec:
+  parallelism: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      containers:
+      - name: infd
+        image: ws.ab/a-s-gao/vsr
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsUser: 1019
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: 16
+            memory: "64Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: 16
+            memory: "64Gi"
+        command:
+        - bash
+        - "-c"
+        # - python3
+        args:
+        - pip install lpips pytorch-ignite pillow==9.1.0 && python /a/mm/eval_sr.py --exp /a/mm/experiments/logs/2025-01-15T19-38-59_ldm_sr_div2k_48_48x48x3_192 --lr_size 48 --scale_ratio 4
+        volumeMounts:
+        - mountPath: "/a/mm"
+          name: vl-0
+        - mountPath: "/a/mm/data"
+          name: vl-1
+        - mountPath: "/a/mm/experiments"
+          name: vl-2
+        - mountPath: /dev/shm
+          name: dshm
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+      restartPolicy: Never
+      volumes:
+      - name: vl-0
+        hostPath:
+          path: "/shared/ssd/home/a-s-gao/code/asd-gs"
+          type: Directory
+      - name: vl-1
+        hostPath:
+          path: "/shared/hdd/data/a-s-gao/"
+          type: Directory
+      - name: vl-2
+        hostPath:
+          path: "/shared/hdd/data/a-s-gao/experiments/asd-gs"
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: "Memory"
+          sizeLimit: "16Gi"

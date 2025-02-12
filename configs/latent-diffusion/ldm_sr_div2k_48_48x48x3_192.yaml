@@ -36,7 +36,7 @@ model:
     first_stage_config:
       target: ldm.models.firststagemodel.FirstStageModel
       params:
-        ckpt_path: # first_stage_model checkpoint
+        ckpt_path: /a/mm/experiments/logs/2025-01-12T19-07-40_first_stage_sr_div2k_48_48x48x3_192_gs/checkpoints/epoch=000993.ckpt
         lossconfig:
           target: torch.nn.Identity
 
@@ -51,11 +51,13 @@ model:
           num_res_blocks: 2
           attn_resolutions: []
           dropout: 0.0
+          training: True
 
         liifconfig:
           hidden_list: [256, 256, 256, 256]
-          cell_decode: True
-          local_ensemble: True
+          kernel_size: 5
+          # cell_decode: True
+          # local_ensemble: True
 
     cond_stage_config:
       target: torch.nn.Identity

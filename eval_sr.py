@@ -198,7 +198,7 @@ if __name__ == '__main__':
     parser.add_argument('--eta', type=float, default=1.0, help='eta of DDIM')
     parser.add_argument('--scale_ratio', type=float, required=True, help='Output size')
     parser.add_argument('--verbose', type=str2bool, default=False, help='Print DDIM progress')
-    parser.add_argument('--save_image', type=str2bool, default=False, help='Save outputs')
+    parser.add_argument('--save_image', type=str2bool, default=True, help='Save outputs')
 
     args = parser.parse_args()
 

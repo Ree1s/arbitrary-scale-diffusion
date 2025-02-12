@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: st-comp
+spec:
+  parallelism: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1376
+        runAsGroup: 1376
+      containers:
+      - name: ml
+        image: ws.ab/shared/ab:uni-cu12-latest
+        imagePullPolicy: Always
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: 7
+            memory:
+          requests:
+            nvidia.com/gpu: 1
+            cpu: 7
+            memory:
+        command:
+        - bash
+        - "-c"
+        args:
+        - export PYTHONPATH=/a/mm && export PATH=/a/mm/venv/bin:$PATH && python3 -u basicsr/train.py -opt "options/train/Photo_Style_Transfer/compstyle_model.yml" 
+        volumeMounts:
+        - mountPath: "/a/mm"
+          name: vl-0
+        - mountPath: "/a/mm/Presets_Applied_jpeg"
+          name: vl-1
+        - mountPath: /dev/shm
+          name: dshm
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+      restartPolicy: Never
+      volumes:
+      - name: vl-0
+        hostPath:
+          path: "/shared/ssd/home/a-o-elezabi/photo_style_transfer/NAFNet"
+          type: Directory
+      - name: vl-1
+        hostPath:
+          path: "/shared/local/data/a-o-elezabi/Presets_Applied_jpeg"
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: "Memory"
+          sizeLimit: "16Gi"
